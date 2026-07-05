@@ -24,7 +24,9 @@
     "start": "tsx src/index.ts",
     "build": "esbuild src/index.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/index.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/__tests__/*.test.ts"
+    "test": "node --import tsx --test src/__tests__/*.test.ts",
+    "test:coverage": "c8 node --import tsx --test src/__tests__/*.test.ts && npm run coverage:gate",
+    "coverage:gate": "c8 report --check-coverage --per-file --lines 95 --include src/server.ts --include src/store.ts --exclude-after-remap"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
@@ -37,6 +39,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22",
+    "c8": "^11.0.0",
     "esbuild": "^0.25.9",
     "tsx": "^4.21.0",
     "typescript": "^5"
