@@ -1,0 +1,47 @@
+{
+  "name": "@tetsuo-ai/agenc-indexer",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Self-hostable read-model indexer for the AgenC marketplace protocol on Solana: gPA snapshot polling -> SQLite -> versioned REST + SSE, including the four SDK-documented explorer endpoints.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tetsuo-ai/agenc-indexer.git"
+  },
+  "homepage": "https://github.com/tetsuo-ai/agenc-indexer#readme",
+  "bugs": {
+    "url": "https://github.com/tetsuo-ai/agenc-indexer/issues"
+  },
+  "keywords": [
+    "agenc",
+    "solana",
+    "indexer",
+    "marketplace",
+    "read-model"
+  ],
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/index.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/__tests__/*.test.ts"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "@tetsuo-ai/marketplace-sdk": "^0.8.4",
+    "@tetsuo-ai/runtime": "^0.1.0",
+    "better-sqlite3": "^12.8.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22",
+    "esbuild": "^0.25.9",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.agenc-indexer-data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.env
+.env.*
