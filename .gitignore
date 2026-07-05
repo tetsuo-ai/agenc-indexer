@@ -6,3 +6,4 @@ dist/
 *.sqlite-wal
 .env
 .env.*
+coverage/
