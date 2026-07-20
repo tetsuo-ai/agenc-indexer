@@ -1,13 +1,19 @@
-import { utils } from '@coral-xyz/anchor';
 import type { Connection, PublicKey } from '@solana/web3.js';
-import { agentStatusToString, parseAgentState } from '@tetsuo-ai/runtime';
+import bs58 from 'bs58';
 import {
+  AGENT_REGISTRATION_DISCRIMINATOR,
+  AgentStatus,
   getServiceListingDecoder,
+  getAgentRegistrationDecoder,
+  getTaskClaimDecoder,
   getTaskDecoder,
   HIRE_RECORD_DISCRIMINATOR,
   SERVICE_LISTING_DISCRIMINATOR,
+  TASK_CLAIM_DISCRIMINATOR,
   TASK_DISCRIMINATOR,
+  type AgentRegistration,
   type Task as SdkTask,
+  type TaskClaim,
 } from '@tetsuo-ai/marketplace-sdk';
 import { decodeHireRecordKeys, type HireRecordRow, type ListingRow } from './explorer.js';
 import { ListingMetadataResolver } from './listing-metadata.js';
@@ -42,12 +48,6 @@ type Logger = {
   info: (message: string) => void;
   warn: (message: string) => void;
   error: (message: string) => void;
-};
-
-/** Minimal structural slice of an anchor Program (avoids generic variance noise). */
-export type ReadOnlyProgramLike = {
-  programId: PublicKey;
-  coder: { accounts: unknown };
 };
 
 export type SnapshotResult = {
@@ -100,7 +100,7 @@ function bytesToHexSafe(value: unknown): string {
   return bytes ? Buffer.from(bytes).toString('hex') : '';
 }
 
-/** anchor BN / bigint / number → canonical decimal string (u64-safe). */
+/** bigint / number / bigint-like value → canonical decimal string (u64-safe). */
 function toDecimalString(value: unknown): string {
   if (typeof value === 'bigint' || typeof value === 'number') {
     return value.toString();
@@ -181,6 +181,21 @@ function taskTypeLabel(taskType: number): string {
   }
 }
 
+function agentStatusLabel(status: AgentStatus): string {
+  switch (status) {
+    case AgentStatus.Inactive:
+      return 'Inactive';
+    case AgentStatus.Active:
+      return 'Active';
+    case AgentStatus.Busy:
+      return 'Busy';
+    case AgentStatus.Suspended:
+      return 'Suspended';
+    default:
+      return `Unknown (${String(status)})`;
+  }
+}
+
 /** Pubkey::default() — the program encodes "no operator/referrer leg" as this. */
 const DEFAULT_PUBKEY = '11111111111111111111111111111111';
 
@@ -198,7 +213,7 @@ function payeeOrNull(address: string): string | null {
 
 export class SnapshotIndexer {
   private readonly connection: Connection;
-  private readonly program: ReadOnlyProgramLike;
+  private readonly programId: PublicKey;
   private readonly store: IndexerStore;
   private readonly logger: Logger;
   private readonly eventStoreLimit: number;
@@ -207,14 +222,14 @@ export class SnapshotIndexer {
 
   constructor(params: {
     connection: Connection;
-    program: ReadOnlyProgramLike;
+    programId: PublicKey;
     store: IndexerStore;
     logger: Logger;
     eventStoreLimit: number;
     disableListingMetadata?: boolean;
   }) {
     this.connection = params.connection;
-    this.program = params.program;
+    this.programId = params.programId;
     this.store = params.store;
     this.logger = params.logger;
     this.eventStoreLimit = params.eventStoreLimit;
@@ -230,20 +245,28 @@ export class SnapshotIndexer {
     const slot = await this.connection.getSlot('confirmed');
 
     const taskAccounts = await this.fetchTaskAccounts();
-    const agentAccounts = await this.fetchDecodedAccounts('agentRegistration');
-    const claimAccounts = await this.fetchDecodedAccounts('taskClaim');
+    const agentAccounts = await this.fetchDecodedAccounts<AgentRegistration>(
+      AGENT_REGISTRATION_DISCRIMINATOR,
+      getAgentRegistrationDecoder(),
+      'AgentRegistration',
+    );
+    const claimAccounts = await this.fetchDecodedAccounts<TaskClaim>(
+      TASK_CLAIM_DISCRIMINATOR,
+      getTaskClaimDecoder(),
+      'TaskClaim',
+    );
 
     const claims: ClaimRecord[] = claimAccounts.map(({ publicKey, account }) => ({
       claimPda: publicKey.toBase58(),
-      taskPda: account.task.toBase58(),
-      workerPda: account.worker.toBase58(),
+      taskPda: String(account.task),
+      workerPda: String(account.worker),
       claimedAt: toEpochSeconds(account.claimedAt),
       completedAt: toEpochSeconds(account.completedAt),
     }));
 
     const taskPdas = taskAccounts.map(({ publicKey }) => publicKey);
     const claimPdas = claimAccounts.map(({ publicKey }) => publicKey);
-    const programId = this.program.programId;
+    const programId = this.programId;
 
     const jobSpecsByTaskPda = await this.fetchJobSpecs(taskPdas, programId);
     const moderationsByTaskPda = await this.fetchModerations(jobSpecsByTaskPda, programId);
@@ -301,18 +324,17 @@ export class SnapshotIndexer {
     const agents: AgentRecord[] = [];
     for (const { publicKey, account } of agentAccounts) {
       try {
-        const agent = parseAgentState(account);
         agents.push({
           pda: publicKey.toBase58(),
-          authority: agent.authority.toBase58(),
-          status: agentStatusToString(agent.status),
-          reputation: agent.reputation,
-          tasksCompleted: Number(agent.tasksCompleted),
-          activeTasks: agent.activeTasks,
-          registeredAt: toEpochSeconds(agent.registeredAt),
-          lastActive: toEpochSeconds(agent.lastActive),
-          capabilities: toDecimalString(agent.capabilities),
-          stake: toDecimalString(agent.stake),
+          authority: String(account.authority),
+          status: agentStatusLabel(account.status),
+          reputation: account.reputation,
+          tasksCompleted: Number(account.tasksCompleted),
+          activeTasks: account.activeTasks,
+          registeredAt: toEpochSeconds(account.registeredAt),
+          lastActive: toEpochSeconds(account.lastActive),
+          capabilities: toDecimalString(account.capabilities),
+          stake: toDecimalString(account.stake),
         });
       } catch (error) {
         this.logger.warn(
@@ -350,13 +372,13 @@ export class SnapshotIndexer {
   private async fetchRawAccountsByDiscriminator(
     discriminator: Iterable<number>,
   ): Promise<Array<{ pda: string; data: Buffer; dataB64: string }>> {
-    const rawAccounts = await this.connection.getProgramAccounts(this.program.programId, {
+    const rawAccounts = await this.connection.getProgramAccounts(this.programId, {
       commitment: 'confirmed',
       filters: [
         {
           memcmp: {
             offset: 0,
-            bytes: utils.bytes.bs58.encode(Buffer.from(Uint8Array.from(discriminator))),
+            bytes: bs58.encode(Uint8Array.from(discriminator)),
           },
         },
       ],
@@ -542,26 +564,14 @@ export class SnapshotIndexer {
 
   /**
    * Fetch + decode every Task account with the marketplace SDK's generated
-   * decoder — its ACCOUNT layouts (incl. the 466-byte Task) are verified
-   * byte-identical to the full-surface binary live on mainnet since the
-   * 2026-06-11 upgrade. (The published 0.6.0 SDK drifted from the deployed
-   * tree only in a few instruction account lists — irrelevant to a
-   * read-only decoder.) The legacy `@tetsuo-ai/runtime` IDL predates
-   * Batch 2/3 and is blind to the operator/referrer fields, so it is no
-   * longer used for Task decoding.
-   *
-   * The gPA discriminator filter still comes from the legacy coder (the
-   * 8-byte sha256("account:Task") prefix is layout-independent), and each
-   * account's decoded discriminator is asserted against the SDK constant so
-   * any drift fails closed instead of mis-decoding.
+   * decoder. The discriminator filter and decoder both come from the same
+   * revision-5 SDK, and each returned account is asserted again before decode
+   * so any future drift fails closed instead of being projected incorrectly.
    */
   private async fetchTaskAccounts(): Promise<Array<{ publicKey: PublicKey; task: SdkTask }>> {
-    const coder = this.program.coder.accounts as unknown as {
-      memcmp: (name: string) => { offset: number; bytes: string };
-    };
-    const rawAccounts = await this.connection.getProgramAccounts(this.program.programId, {
+    const rawAccounts = await this.connection.getProgramAccounts(this.programId, {
       commitment: 'confirmed',
-      filters: [{ memcmp: coder.memcmp('task') }],
+      filters: [{ memcmp: { offset: 0, bytes: bs58.encode(Uint8Array.from(TASK_DISCRIMINATOR)) } }],
     });
 
     const decoder = getTaskDecoder();
@@ -589,29 +599,37 @@ export class SnapshotIndexer {
     if (skipped > 0) {
       this.logger.warn(`Skipped ${skipped} undecodable task account(s)`);
     }
+    if (rawAccounts.length > 0 && decoded.length === 0) {
+      throw new Error(
+        `Refusing to replace the task snapshot: all ${rawAccounts.length} Task account(s) failed revision-5 decoding`,
+      );
+    }
     return decoded;
   }
 
-  private async fetchDecodedAccounts(
+  private async fetchDecodedAccounts<T>(
+    discriminator: Iterable<number>,
+    decoder: { decode: (data: Uint8Array) => T },
     accountName: string,
-  ): Promise<Array<{ publicKey: PublicKey; account: any }>> {
-    const coder = this.program.coder.accounts as unknown as {
-      memcmp: (name: string) => { offset: number; bytes: string };
-      decode: (name: string, data: Buffer) => any;
-    };
-    const discriminatorFilter = { memcmp: coder.memcmp(accountName) };
-    const rawAccounts = await this.connection.getProgramAccounts(this.program.programId, {
+  ): Promise<Array<{ publicKey: PublicKey; account: T }>> {
+    const discriminatorBytes = Uint8Array.from(discriminator);
+    const expectedDiscriminator = Buffer.from(discriminatorBytes);
+    const rawAccounts = await this.connection.getProgramAccounts(this.programId, {
       commitment: 'confirmed',
-      filters: [discriminatorFilter],
+      filters: [{ memcmp: { offset: 0, bytes: bs58.encode(discriminatorBytes) } }],
     });
 
-    const decoded: Array<{ publicKey: PublicKey; account: any }> = [];
+    const decoded: Array<{ publicKey: PublicKey; account: T }> = [];
     let skipped = 0;
     for (const rawAccount of rawAccounts) {
       try {
+        const data = rawAccount.account.data as Buffer;
+        if (!data.subarray(0, 8).equals(expectedDiscriminator)) {
+          throw new Error('discriminator mismatch');
+        }
         decoded.push({
           publicKey: rawAccount.pubkey,
-          account: coder.decode(accountName, rawAccount.account.data as Buffer),
+          account: decoder.decode(data),
         });
       } catch (error) {
         skipped += 1;
@@ -626,6 +644,11 @@ export class SnapshotIndexer {
     }
     if (skipped > 0) {
       this.logger.warn(`Skipped ${skipped} undecodable ${accountName} account(s)`);
+    }
+    if (rawAccounts.length > 0 && decoded.length === 0) {
+      throw new Error(
+        `Refusing to replace the ${accountName} snapshot: all ${rawAccounts.length} account(s) failed revision-5 decoding`,
+      );
     }
     return decoded;
   }

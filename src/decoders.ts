@@ -1,12 +1,12 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 
 /**
- * Manual Borsh decoders for marketplace accounts that are NOT in the runtime's
- * bundled (legacy) IDL: TaskJobSpec, TaskValidationConfig, TaskSubmission and
- * TaskModeration. Adapted from agenc-public-explorer task-validation.ts.
+ * Manual Borsh projections retained for the task-validation read model. Core
+ * Task, AgentRegistration, TaskClaim, ServiceListing, and HireRecord accounts
+ * use the revision-5 marketplace SDK's generated decoders directly.
  *
- * Discriminators verified against agenc-protocol artifacts/anchor IDL
- * (2026-06-11): TaskJobSpec [249,63,211,94,228,165,3,196],
+ * Discriminators verified against the agenc-protocol revision-5 IDL:
+ * TaskJobSpec [249,63,211,94,228,165,3,196],
  * TaskValidationConfig [101,204,19,0,210,2,191,0],
  * TaskSubmission [111,64,190,132,148,33,215,63] (273 bytes),
  * TaskModeration [170,214,132,159,229,119,11,43].

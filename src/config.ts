@@ -21,7 +21,7 @@ export type IndexerConfig = {
   host: ConfigValue;
   snapshotIntervalMs: ConfigValue;
   eventStoreLimit: ConfigValue;
-  disableEventMonitor: ConfigValue;
+  disableLogSubscription: ConfigValue;
   disableListingMetadata: ConfigValue;
   trustedModerators: ConfigValue;
 };
@@ -56,7 +56,9 @@ export function loadConfig(): IndexerConfig {
     host: resolve('HOST'),
     snapshotIntervalMs: resolve('SNAPSHOT_INTERVAL_MS'),
     eventStoreLimit: resolve('EVENT_STORE_LIMIT'),
-    disableEventMonitor: resolve('DISABLE_EVENT_MONITOR'),
+    // Keep the established env name for deployment compatibility even though
+    // the old runtime EventMonitor has been replaced by a direct log listener.
+    disableLogSubscription: resolve('DISABLE_EVENT_MONITOR'),
     disableListingMetadata: resolve('DISABLE_LISTING_METADATA'),
     trustedModerators: resolve('TRUSTED_MODERATORS'),
   };
@@ -71,7 +73,7 @@ export function configBootLines(config: IndexerConfig): string[] {
     ['HOST', config.host],
     ['SNAPSHOT_INTERVAL_MS', config.snapshotIntervalMs],
     ['EVENT_STORE_LIMIT', config.eventStoreLimit],
-    ['DISABLE_EVENT_MONITOR', config.disableEventMonitor],
+    ['DISABLE_EVENT_MONITOR', config.disableLogSubscription],
     ['DISABLE_LISTING_METADATA', config.disableListingMetadata],
     ['TRUSTED_MODERATORS', config.trustedModerators],
   ];

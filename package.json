@@ -29,12 +29,19 @@
     "coverage:gate": "c8 report --check-coverage --per-file --lines 95 --include src/server.ts --include src/store.ts --exclude-after-remap"
   },
   "dependencies": {
-    "@coral-xyz/anchor": "^0.32.1",
-    "@solana/spl-token": "^0.4.14",
+    "@solana/kit": "^6.9.0",
+    "@solana/program-client-core": "^6.4.0",
     "@solana/web3.js": "^1.98.4",
-    "@tetsuo-ai/marketplace-sdk": "^0.8.4",
-    "@tetsuo-ai/runtime": "^0.1.0",
-    "better-sqlite3": "^12.8.0"
+    "@tetsuo-ai/marketplace-sdk": "^0.12.0",
+    "better-sqlite3": "^12.8.0",
+    "bs58": "^6.0.0"
+  },
+  "comment:overrides": "web3.js' jayson dependency only uses uuid.v4 and standard ws APIs. These scoped updates retain those APIs, include the uuid bounds-check fix, and avoid an invalid ws7 optional-peer tree beside Solana's ws8 stack.",
+  "overrides": {
+    "jayson": {
+      "uuid": "11.1.1",
+      "ws": "8.21.0"
+    }
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -45,6 +52,6 @@
     "typescript": "^5"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.18.0"
   }
 }

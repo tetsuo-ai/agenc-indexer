@@ -18,7 +18,7 @@ Extracted from agenc.ag's internal `services/indexer` (itself adapted from
 ## Run
 
 ```bash
-# plain node (>= 20)
+# plain node (>= 20.18)
 npm install
 npm start                 # tsx, foreground
 npm run dev               # tsx watch
@@ -47,7 +47,7 @@ curl -s localhost:8787/api/explorer/listings | head -c 400
 | `HOST` | `127.0.0.1` | bind `0.0.0.0` only behind a reverse proxy / in a container |
 | `SNAPSHOT_INTERVAL_MS` | `45000` | base poll interval; doubles up to 15 min on RPC errors/429s |
 | `EVENT_STORE_LIMIT` | `2000` | max persisted feed events |
-| `DISABLE_EVENT_MONITOR` | `false` | `true` skips websocket log subscriptions (polling only) |
+| `DISABLE_EVENT_MONITOR` | `false` | `true` skips websocket log subscriptions (polling only). The established variable name is retained although the old runtime EventMonitor dependency is gone. |
 | `DISABLE_LISTING_METADATA` | `false` | `true` skips outbound spec-metadata fetches; listings then serve `metadataValid: false` with an explicit issue (never a fabricated pass) |
 | `TRUSTED_MODERATORS` | *(empty)* | extra comma-separated moderator pubkeys whose on-chain moderation records count toward `verified` (the global moderation authority + attest.agenc.ag roster attestor are always trusted) |
 
@@ -120,10 +120,12 @@ npm run typecheck
 npm test
 ```
 
-18 tests: the wire-contract mapping suite (status/type remapping, RejectFrozen
-never claimable), untrusted on-chain text gating, explorer projection
+The test suite covers wire-contract mapping (status/type remapping,
+RejectFrozen never claimable), untrusted on-chain text gating, explorer projection
 (byte-true listing decode round-trip, filters/paging, hires join),
-LISTING_METADATA conformance + caching, and the T7 size manifest.
+LISTING_METADATA conformance + caching, the T7 size manifest, and revision-5
+Task / AgentRegistration / TaskClaim snapshot decoding with last-good-snapshot
+preservation on total decoder failure.
 
 ## What was left behind in the extraction (and why)
 

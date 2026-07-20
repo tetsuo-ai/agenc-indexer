@@ -1,6 +1,5 @@
 import { isAbsolute, join } from 'node:path';
 import { Connection, PublicKey } from '@solana/web3.js';
-import { EventMonitor, createLogger, createReadOnlyProgram } from '@tetsuo-ai/runtime';
 import { configBootLines, loadConfig, parseIntStrict } from './config.js';
 import { SnapshotIndexer } from './indexer.js';
 import { IndexerServer } from './server.js';
@@ -18,7 +17,11 @@ import { IndexerStore } from './store.js';
  * crash-looping.
  */
 
-const logger = createLogger('info', '[agenc-indexer]');
+const logger = {
+  info: (message: string) => console.info(`[agenc-indexer] ${message}`),
+  warn: (message: string) => console.warn(`[agenc-indexer] ${message}`),
+  error: (message: string) => console.error(`[agenc-indexer] ${message}`),
+};
 
 // Public RPC hiccups (websocket drops, slow gPA) must never kill the process.
 process.on('unhandledRejection', (reason) => {
@@ -41,13 +44,6 @@ const DB_PATH = isAbsolute(config.dbPath.value) ? config.dbPath.value : join(pro
 
 const connection = new Connection(config.rpcUrl.value, 'confirmed');
 const programId = new PublicKey(config.programId.value);
-// Mainnet runs the FULL 84-instruction surface since the 2026-06-11 upgrade
-// (Task accounts are 466 bytes). Task accounts are decoded with the
-// marketplace SDK's generated client (see SnapshotIndexer.fetchTaskAccounts);
-// this legacy read-only program is kept ONLY for what is still
-// layout-identical: AgentRegistration/TaskClaim decoding, the gPA
-// discriminator filters, and the EventMonitor log subscriptions below.
-const program = createReadOnlyProgram(connection, programId);
 const store = new IndexerStore(DB_PATH);
 
 let lastError: string | null = null;
@@ -60,7 +56,7 @@ let shuttingDown = false;
 
 const indexer = new SnapshotIndexer({
   connection,
-  program,
+  programId,
   store,
   logger,
   eventStoreLimit: EVENT_STORE_LIMIT,
@@ -141,41 +137,26 @@ function queueRefresh(reason: string): void {
 }
 
 /**
- * EventMonitor (anchor log subscriptions over the RPC websocket) is used as a
- * low-latency refresh trigger only — the snapshot diff is the canonical feed
- * event source, so a dead websocket degrades latency, never correctness.
+ * Program log subscriptions are a low-latency refresh trigger only. The
+ * snapshot diff is the canonical feed event source, so a dead websocket
+ * degrades latency, never correctness.
  */
-function registerEventSubscriptions(): EventMonitor | null {
-  if (config.disableEventMonitor.value === 'true' || config.disableEventMonitor.value === '1') {
-    logger.info('EventMonitor disabled via DISABLE_EVENT_MONITOR');
+function registerEventSubscriptions(): number | null {
+  if (config.disableLogSubscription.value === 'true' || config.disableLogSubscription.value === '1') {
+    logger.info('Program log subscription disabled via DISABLE_EVENT_MONITOR');
     return null;
   }
   try {
-    const monitor = new EventMonitor({ program, logger });
-    monitor.subscribeToTaskEvents({
-      onTaskCreated: () => queueRefresh('event:task_created'),
-      onTaskClaimed: () => queueRefresh('event:task_claimed'),
-      onTaskCompleted: () => queueRefresh('event:task_completed'),
-      onTaskCancelled: () => queueRefresh('event:task_cancelled'),
-    });
-    monitor.subscribeToDisputeEvents({
-      onDisputeInitiated: () => queueRefresh('event:dispute_initiated'),
-      onDisputeResolved: () => queueRefresh('event:dispute_resolved'),
-    });
-    monitor.subscribeToProtocolEvents({
-      onRewardDistributed: () => queueRefresh('event:reward_distributed'),
-    });
-    monitor.subscribeToAgentEvents({
-      onRegistered: () => queueRefresh('event:agent_registered'),
-      onUpdated: () => queueRefresh('event:agent_updated'),
-      onDeregistered: () => queueRefresh('event:agent_deregistered'),
-    });
-    monitor.start();
-    logger.info('EventMonitor live (websocket refresh triggers)');
-    return monitor;
+    const subscriptionId = connection.onLogs(
+      programId,
+      () => queueRefresh('program-log'),
+      'confirmed',
+    );
+    logger.info('Program log subscription live (websocket refresh trigger)');
+    return subscriptionId;
   } catch (error) {
     logger.warn(
-      `EventMonitor unavailable, falling back to polling only: ${error instanceof Error ? error.message : String(error)}`,
+      `Program log subscription unavailable, falling back to polling only: ${error instanceof Error ? error.message : String(error)}`,
     );
     return null;
   }
@@ -186,7 +167,7 @@ async function main(): Promise<void> {
   logger.info(`Watching program ${programId.toBase58()} (${config.programId.source})`);
   logger.info(`SQLite read model at ${DB_PATH}`);
 
-  const monitor = registerEventSubscriptions();
+  const logSubscriptionId = registerEventSubscriptions();
 
   server.listen(PORT, config.host.value, () => {
     logger.info(`Indexer listening on http://${config.host.value}:${PORT}`);
@@ -210,8 +191,19 @@ async function main(): Promise<void> {
       pollTimer = null;
     }
     server.close();
-    if (monitor) {
-      await monitor.stop().catch(() => undefined);
+    if (logSubscriptionId !== null) {
+      await connection.removeOnLogsListener(logSubscriptionId).catch((error) => {
+        logger.warn(
+          `Program log subscription teardown failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+    }
+    // A signal can arrive during a full gPA refresh. Do not close SQLite out
+    // from under that refresh; it already catches RPC errors and always
+    // settles, so waiting here is bounded by the in-flight RPC operations.
+    const pendingRefresh = refreshInFlight;
+    if (pendingRefresh) {
+      await pendingRefresh;
     }
     store.close();
   };
